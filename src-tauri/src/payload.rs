@@ -77,5 +77,5 @@ pub struct PortBinding{
 pub struct NetworkContainer {
     pub id: String,
     pub name: String,
-    pub network_id: String,
+    pub network_id: Option<std::string::String>,
 }

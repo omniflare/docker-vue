@@ -1,34 +1,3 @@
-import { useState, useEffect } from 'react';
-import {
-    Card,
-    CardContent,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table';
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -40,9 +9,40 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { Trash2, Plus, RefreshCw, Link } from 'lucide-react';
-import { toast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
+import {
+    Card,
+    CardContent,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
 import { invoke } from '@tauri-apps/api/core';
+import { Link, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
 interface Network {
     id: string;
@@ -67,7 +67,6 @@ interface NetworkContainer {
     network_id: string;
 }
 
-
 const NetworkManager = () => {
     const [networks, setNetworks] = useState<Network[]>([]);
     const [containers, setContainers] = useState<Container[]>([]);
@@ -84,18 +83,20 @@ const NetworkManager = () => {
 
     const fetchNetworkContainers = async (networkId: string) => {
         try {
-            const containers = await invoke('list_network_containers', { networkId });
+            const containers = await invoke('list_network_containers', { network_name: networkId });
             setNetworkContainers(containers as NetworkContainer[]);
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error fetching network containers",
-                description: error as string,
+            toast.error('Error fetching network containers', {
+                description: "some error occured"
             });
+            console.log(error)
         }
     };
 
-    const handleNetworkClick = async (network: Network) => {
+    const handleNetworkClick = async (event: React.MouseEvent, network: Network) => {
+        event.preventDefault();
+        event.stopPropagation();
+
         setSelectedNetworkForContainers(network);
         setIsNetworkContainersDialogOpen(true);
         await fetchNetworkContainers(network.id);
@@ -106,12 +107,15 @@ const NetworkManager = () => {
         try {
             const networkList = await invoke('list_networks');
             setNetworks(networkList as Network[]);
+            console.log(networkList)
+
+            const testing = await invoke('list_network_containers', { networkName: "new_something" });
+            console.log("testing : ", testing);
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error fetching networks",
-                description: error as string,
+            toast.error('Error fetching networks', {
+                description: "some error occured"
             });
+            console.log(error)
         }
         setIsLoading(false);
     };
@@ -121,11 +125,13 @@ const NetworkManager = () => {
             const containerList = await invoke('list_containers');
             setContainers(containerList as Container[]);
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error fetching containers",
-                description: error as string,
+
+
+
+            toast.error('Error fetching containers', {
+                description: "some error occured"
             });
+            console.log(error)
         }
     };
 
@@ -136,10 +142,8 @@ const NetworkManager = () => {
 
     const handleCreateNetwork = async () => {
         if (!newNetworkName.trim()) {
-            toast({
-                variant: "destructive",
-                title: "Invalid network name",
-                description: "Network name cannot be empty",
+            toast.error('Invalid network name', {
+                description: 'Network name cannot be empty'
             });
             return;
         }
@@ -149,45 +153,45 @@ const NetworkManager = () => {
                 name: newNetworkName,
                 driver: newNetworkDriver
             });
-            toast({
-                title: "Success",
-                description: `Network ${newNetworkName} created successfully`,
+            toast.success('Network created', {
+                description: `Network ${newNetworkName} created successfully`
             });
             setNewNetworkName('');
             setIsCreateDialogOpen(false);
             fetchNetworks();
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error creating network",
-                description: error as string,
+
+
+
+            toast.error('Error creating network', {
+                description: "some error occured"
             });
+            console.log(error)
         }
     };
 
     const handleRemoveNetwork = async (networkId: string) => {
         try {
             await invoke('remove_network', { networkId });
-            toast({
-                title: "Success",
-                description: `Network removed successfully`,
+            toast.success('Network removed', {
+                description: 'Network removed successfully'
             });
             fetchNetworks();
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error removing network",
-                description: error as string,
+
+
+
+            toast.error('Error removing network', {
+                description: "some error occured"
             });
+            console.log(error)
         }
     };
 
     const handleConnectContainer = async () => {
         if (!selectedContainer || !selectedNetwork) {
-            toast({
-                variant: "destructive",
-                title: "Invalid selection",
-                description: "Please select both a container and a network",
+            toast.error('Invalid selection', {
+                description: 'Please select both a container and a network'
             });
             return;
         }
@@ -197,19 +201,20 @@ const NetworkManager = () => {
                 containerId: selectedContainer,
                 networkId: selectedNetwork
             });
-            toast({
-                title: "Success",
-                description: "Container connected to network successfully",
+            toast.success('Container connected', {
+                description: 'Container connected to network successfully'
             });
             setIsConnectDialogOpen(false);
             setSelectedContainer('');
             setSelectedNetwork('');
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error connecting container",
-                description: error as string,
+
+
+
+            toast.error('Error connecting container', {
+                description: "some error occured"
             });
+            console.log(error)
         }
     };
 
@@ -219,17 +224,18 @@ const NetworkManager = () => {
                 containerId,
                 networkId
             });
-            toast({
-                title: "Success",
-                description: "Container disconnected from network successfully",
+            toast.success('Container disconnected', {
+                description: 'Container disconnected from network successfully'
             });
             fetchNetworks();
         } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error disconnecting container",
-                description: error as string,
+
+
+
+            toast.error('Error disconnecting container', {
+                description: "some error occured"
             });
+            console.log(error);
         }
     };
 
@@ -354,7 +360,7 @@ const NetworkManager = () => {
                             <TableRow
                                 key={network.id}
                                 className="cursor-pointer hover:bg-gray-50"
-                                onClick={() => handleNetworkClick(network)}
+                                onClick={(e) => handleNetworkClick(e, network)}
                             >
                                 <TableCell>{network.name}</TableCell>
                                 <TableCell>{network.driver}</TableCell>
@@ -394,7 +400,6 @@ const NetworkManager = () => {
                     </TableBody>
                 </Table>
 
-                {/* Network Containers Dialog */}
                 <Dialog
                     open={isNetworkContainersDialogOpen}
                     onOpenChange={setIsNetworkContainersDialogOpen}

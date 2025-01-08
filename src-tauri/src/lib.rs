@@ -4,7 +4,7 @@ use bollard::container::{
 };
 use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
 use bollard::network::{
-    ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions, InspectNetworkOptions,
+    ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions,
     ListNetworksOptions,
 };
 use bollard::secret::HostConfig;
@@ -525,6 +525,47 @@ async fn create_network(
 }
 
 #[tauri::command]
+async fn list_network_containers(
+    state: State<'_, AppState>,
+    network_name: &str,
+) -> Result<Vec<NetworkContainer>, CommandError> {
+    use bollard::network::InspectNetworkOptions;
+
+    let docker = &state.docker;
+    let network = docker
+        .inspect_network(
+            network_name,
+            Some(InspectNetworkOptions {
+                verbose: true,
+                scope: "global",
+            }),
+        )
+        .await
+        .map_err(|e| CommandError::DockerError(format!("Failed to inspect network: {}", e)))?;
+    let containers = match network.containers {
+        Some(containers) => {
+            containers
+                .into_iter()
+                .map(|(id, details)| NetworkContainer {
+                    id,
+                    name: details.name.unwrap_or_else(|| "Unnamed".to_string()),
+                    network_id: network.id.clone(),
+                })
+                .collect::<Vec<_>>()
+        }
+        None => Vec::new(),
+    };
+
+    // println!(
+    //     "Found {} containers in network '{}'",
+    //     containers.len(),
+    //     network_name
+    // );
+    Ok(containers)
+}
+
+
+#[tauri::command]
 async fn remove_network(state: State<'_, AppState>, network_id: &str) -> Result<(), CommandError> {
     let docker = &state.docker;
 
@@ -645,39 +686,6 @@ async fn disconnect_container_from_network(
     Ok(())
 }
 
-#[tauri::command]
-async fn list_network_containers(
-    state: State<'_, AppState>,
-    network_id: &str,
-) -> Result<Vec<NetworkContainer>, CommandError> {
-    let docker = &state.docker;
-    let config = InspectNetworkOptions {
-        verbose: true,
-        scope: "global",
-    };
-    let network = docker
-        .inspect_network(network_id, Some(config))
-        .await
-        .map_err(|e| CommandError::DockerError(format!("Failed to inspect network: {}", e)))?;
-
-    let containers = match network.containers {
-        Some(containers) => {
-            let mut result = Vec::new();
-            for (id, details) in containers {
-                let name = details.name.unwrap_or_else(|| id.clone());
-                result.push(NetworkContainer {
-                    id,
-                    name,
-                    network_id: network_id.to_string(),
-                });
-            }
-            result
-        }
-        None => Vec::new(),
-    };
-
-    Ok(containers)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
