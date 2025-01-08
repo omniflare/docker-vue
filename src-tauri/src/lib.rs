@@ -1,20 +1,23 @@
-use std::collections::HashMap;
-
 use bollard::container::{
     Config, CreateContainerOptions, KillContainerOptions, ListContainersOptions, LogsOptions,
     StopContainerOptions,
 };
-use bollard::image::{ListImagesOptions, RemoveImageOptions};
-use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions, ListNetworksOptions};
+use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
+use bollard::network::{
+    ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions, InspectNetworkOptions,
+    ListNetworksOptions,
+};
 use bollard::secret::HostConfig;
+use bollard::volume::ListVolumesOptions;
 use bollard::Docker;
 use futures_util::StreamExt;
-use payload::Network;
+use payload::{Network, NetworkContainer, ProgressInfo, Volume};
+use std::collections::HashMap;
 
 use crate::error::CommandError;
 use crate::payload::{Container, Image};
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{Emitter, State};
 
 mod error;
 mod payload;
@@ -118,43 +121,42 @@ async fn create_container(
 ) -> Result<(), CommandError> {
     let docker = &state.docker;
 
-    let port_bindings = port_mapping.as_ref().map(|mapping| {
-        let parts: Vec<&str> = mapping.split(':').collect();
-        if parts.len() != 2 {
-            return HashMap::new();
-        }
+    let port_bindings = port_mapping
+        .as_ref()
+        .map(|mapping| {
+            let parts: Vec<&str> = mapping.split(':').collect();
+            if parts.len() != 2 {
+                return HashMap::new();
+            }
 
-        let mut port_bindings = HashMap::new();
-        let host_port = parts[0];
-        let container_port = parts[1];
-        
-        let host_binding = vec![bollard::service::PortBinding {
-            host_ip: Some("0.0.0.0".to_string()),
-            host_port: Some(host_port.to_string()),
-        }];
-        port_bindings.insert(
-            format!("{}/tcp", container_port),
-            Some(host_binding),
-        );
-        
-        port_bindings
-    }).unwrap_or_default();
+            let mut port_bindings = HashMap::new();
+            let host_port = parts[0];
+            let container_port = parts[1];
 
-    let exposed_ports = port_mapping.map(|mapping| {
-        let parts: Vec<&str> = mapping.split(':').collect();
-        if parts.len() != 2 {
-            return HashMap::new();
-        }
+            let host_binding = vec![bollard::service::PortBinding {
+                host_ip: Some("0.0.0.0".to_string()),
+                host_port: Some(host_port.to_string()),
+            }];
+            port_bindings.insert(format!("{}/tcp", container_port), Some(host_binding));
 
-        let mut exposed_ports = HashMap::new();
-        let container_port = parts[1];
-        exposed_ports.insert(
-            format!("{}/tcp", container_port),
-            HashMap::new(),
-        );
-        
-        exposed_ports
-    }).unwrap_or_default();
+            port_bindings
+        })
+        .unwrap_or_default();
+
+    let exposed_ports = port_mapping
+        .map(|mapping| {
+            let parts: Vec<&str> = mapping.split(':').collect();
+            if parts.len() != 2 {
+                return HashMap::new();
+            }
+
+            let mut exposed_ports = HashMap::new();
+            let container_port = parts[1];
+            exposed_ports.insert(format!("{}/tcp", container_port), HashMap::new());
+
+            exposed_ports
+        })
+        .unwrap_or_default();
 
     let config = Config {
         image: Some(image),
@@ -180,10 +182,7 @@ async fn create_container(
 }
 
 #[tauri::command]
-async fn remove_image(
-    state: State<'_, AppState>,
-    image: &str
-) -> Result<(), CommandError> {
+async fn remove_image(state: State<'_, AppState>, image: &str) -> Result<(), CommandError> {
     let docker = &state.docker;
 
     let options = RemoveImageOptions {
@@ -191,14 +190,10 @@ async fn remove_image(
         ..Default::default()
     };
 
-    match docker
-        .remove_image(image, Some(options), None)
-        .await {
-            Ok(_) => {
-                Ok(())
-            }
-            Err(e) => {
-                 if e.to_string().contains("No such image") {
+    match docker.remove_image(image, Some(options), None).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if e.to_string().contains("No such image") {
                 Err(CommandError::DockerError(format!(
                     "image '{}' not found: {}",
                     image, e
@@ -214,14 +209,17 @@ async fn remove_image(
                     image, e
                 )))
             }
-            }
         }
+    }
 
     // Ok(())
 }
 
 #[tauri::command]
-async fn start_container(state: State<'_, AppState>, container_name: &str) -> Result<(), CommandError> {
+async fn start_container(
+    state: State<'_, AppState>,
+    container_name: &str,
+) -> Result<(), CommandError> {
     let docker = &state.docker;
 
     match docker.start_container::<String>(container_name, None).await {
@@ -249,8 +247,6 @@ async fn start_container(state: State<'_, AppState>, container_name: &str) -> Re
         }
     }
 }
-
-
 
 #[tauri::command]
 async fn kill_container(
@@ -287,14 +283,23 @@ async fn kill_container(
 }
 
 #[tauri::command]
-async fn delete_container(state: State<'_, AppState>, container_name: &str) -> Result<(), CommandError> {
+async fn delete_container(
+    state: State<'_, AppState>,
+    container_name: &str,
+) -> Result<(), CommandError> {
     let docker = &state.docker;
 
-    match docker.remove_container(container_name, Some(bollard::container::RemoveContainerOptions {
-        force: true, 
-        v: true,     
-        ..Default::default()
-    })).await {
+    match docker
+        .remove_container(
+            container_name,
+            Some(bollard::container::RemoveContainerOptions {
+                force: true,
+                v: true,
+                ..Default::default()
+            }),
+        )
+        .await
+    {
         Ok(_) => {
             println!("Deleted container '{}' successfully.", container_name);
             Ok(())
@@ -320,13 +325,13 @@ async fn delete_container(state: State<'_, AppState>, container_name: &str) -> R
     }
 }
 
-
 #[tauri::command]
-async fn stop_container(state : State<'_, AppState>, container_name : &str) -> Result<(), CommandError> {
+async fn stop_container(
+    state: State<'_, AppState>,
+    container_name: &str,
+) -> Result<(), CommandError> {
     let docker = &state.docker;
-    let options = StopContainerOptions {
-        t: 10
-    };
+    let options = StopContainerOptions { t: 10 };
 
     match docker.stop_container(container_name, Some(options)).await {
         Ok(_) => {
@@ -334,13 +339,12 @@ async fn stop_container(state : State<'_, AppState>, container_name : &str) -> R
             return Ok(());
         }
         Err(e) => {
-            if e.to_string().contains("No such container"){
+            if e.to_string().contains("No such container") {
                 return Err(CommandError::DockerError(format!(
                     "Container '{}' not found: {}",
                     container_name, e
-                )))
-            }
-            else if e.to_string().contains("permission denied") {
+                )));
+            } else if e.to_string().contains("permission denied") {
                 return Err(CommandError::DockerError(format!(
                     "Permission denied while attempting to kill container '{}': {}",
                     container_name, e
@@ -355,25 +359,55 @@ async fn stop_container(state : State<'_, AppState>, container_name : &str) -> R
     }
 }
 
-
 #[tauri::command]
 async fn create_volume(state: State<'_, AppState>, volume_name: &str) -> Result<(), CommandError> {
     let docker = &state.docker;
 
-    match docker.create_volume(bollard::volume::CreateVolumeOptions {
-        name: volume_name.to_string(),
-        ..Default::default()
-    }).await {
+    match docker
+        .create_volume(bollard::volume::CreateVolumeOptions {
+            name: volume_name.to_string(),
+            ..Default::default()
+        })
+        .await
+    {
         Ok(_) => {
             println!("Volume '{}' created successfully.", volume_name);
             Ok(())
         }
-        Err(e) => {
-            Err(CommandError::DockerError(format!(
-                "Failed to create volume '{}': {}",
-                volume_name, e
-            )))
+        Err(e) => Err(CommandError::DockerError(format!(
+            "Failed to create volume '{}': {}",
+            volume_name, e
+        ))),
+    }
+}
+
+#[tauri::command]
+async fn list_volumes(state: State<'_, AppState>) -> Result<Vec<Volume>, CommandError> {
+    let docker = &state.docker;
+    let mut filters = HashMap::new();
+    filters.insert("dangling", vec!["1"]);
+    let options = ListVolumesOptions { filters };
+    match docker.list_volumes(Some(options)).await {
+        Ok(response) => {
+            let volumes = response
+                .volumes
+                .unwrap_or_default()
+                .into_iter()
+                .map(|v| Volume {
+                    name: v.name,
+                    driver: v.driver,
+                    mountpoint: Some(v.mountpoint),
+                    labels: Some(v.labels),
+                    scope: v.scope,
+                    status: v.status,
+                })
+                .collect();
+            Ok(volumes)
         }
+        Err(e) => Err(CommandError::DockerError(format!(
+            "Failed to list volumes: {}",
+            e
+        ))),
     }
 }
 
@@ -407,12 +441,13 @@ async fn remove_volume(state: State<'_, AppState>, volume_name: &str) -> Result<
     }
 }
 
-
-
 #[tauri::command]
-async fn pause_container(state: State<'_, AppState>, container_name: &str) -> Result<(), CommandError> {
+async fn pause_container(
+    state: State<'_, AppState>,
+    container_name: &str,
+) -> Result<(), CommandError> {
     let docker = &state.docker;
-    
+
     docker
         .pause_container(container_name)
         .await
@@ -422,9 +457,12 @@ async fn pause_container(state: State<'_, AppState>, container_name: &str) -> Re
 }
 
 #[tauri::command]
-async fn unpause_container(state: State<'_, AppState>, container_name: &str) -> Result<(), CommandError> {
+async fn unpause_container(
+    state: State<'_, AppState>,
+    container_name: &str,
+) -> Result<(), CommandError> {
     let docker = &state.docker;
-    
+
     docker
         .unpause_container(container_name)
         .await
@@ -436,7 +474,7 @@ async fn unpause_container(state: State<'_, AppState>, container_name: &str) -> 
 #[tauri::command]
 async fn list_networks(state: State<'_, AppState>) -> Result<Vec<Network>, CommandError> {
     let docker = &state.docker;
-    
+
     let networks = docker
         .list_networks(Some(ListNetworksOptions::<String> {
             ..Default::default()
@@ -464,14 +502,14 @@ async fn list_networks(state: State<'_, AppState>) -> Result<Vec<Network>, Comma
 
 #[tauri::command]
 async fn create_network(
-    state: State<'_, AppState>, 
+    state: State<'_, AppState>,
     name: String,
     driver: Option<String>,
 ) -> Result<(), CommandError> {
     let docker = &state.docker;
 
     let driv = driver.unwrap_or_else(|| "bridge".to_string());
-    
+
     let options = CreateNetworkOptions {
         name: name.as_str(),
         driver: driv.as_str(),
@@ -516,7 +554,6 @@ async fn remove_network(state: State<'_, AppState>, network_id: &str) -> Result<
     }
 }
 
-
 #[tauri::command]
 async fn connect_container_to_network(
     state: State<'_, AppState>,
@@ -524,7 +561,7 @@ async fn connect_container_to_network(
     network_id: &str,
 ) -> Result<(), CommandError> {
     let docker = &state.docker;
-    
+
     docker
         .connect_network(
             network_id,
@@ -534,11 +571,53 @@ async fn connect_container_to_network(
             },
         )
         .await
-        .map_err(|e| CommandError::DockerError(format!("Failed to connect container to network: {}", e)))?;
+        .map_err(|e| {
+            CommandError::DockerError(format!("Failed to connect container to network: {}", e))
+        })?;
 
     Ok(())
 }
 
+#[tauri::command]
+async fn pull_image(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    image_name: String,
+) -> Result<(), CommandError> {
+    let docker = &state.docker;
+
+    let options = Some(CreateImageOptions {
+        from_image: image_name.as_str(),
+        ..Default::default()
+    });
+
+    let mut pull_stream = docker.create_image(options, None, None);
+
+    while let Some(result) = pull_stream.next().await {
+        match result {
+            Ok(output) => {
+                if let Ok(progress) = serde_json::from_value::<ProgressInfo>(
+                    serde_json::to_value(output).unwrap_or_default(),
+                ) {
+                    app_handle.emit("pull-progress", progress).map_err(|e| {
+                        CommandError::UnexpectedError(format!(
+                            "Failed to send progress update: {}",
+                            e
+                        ))
+                    })?;
+                }
+            }
+            Err(e) => {
+                return Err(CommandError::DockerError(format!(
+                    "Failed to pull image: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
 #[tauri::command]
 async fn disconnect_container_from_network(
     state: State<'_, AppState>,
@@ -546,7 +625,7 @@ async fn disconnect_container_from_network(
     network_id: &str,
 ) -> Result<(), CommandError> {
     let docker = &state.docker;
-    
+
     docker
         .disconnect_network(
             network_id,
@@ -556,9 +635,48 @@ async fn disconnect_container_from_network(
             },
         )
         .await
-        .map_err(|e| CommandError::DockerError(format!("Failed to disconnect container from network: {}", e)))?;
+        .map_err(|e| {
+            CommandError::DockerError(format!(
+                "Failed to disconnect container from network: {}",
+                e
+            ))
+        })?;
 
     Ok(())
+}
+
+#[tauri::command]
+async fn list_network_containers(
+    state: State<'_, AppState>,
+    network_id: &str,
+) -> Result<Vec<NetworkContainer>, CommandError> {
+    let docker = &state.docker;
+    let config = InspectNetworkOptions {
+        verbose: true,
+        scope: "global",
+    };
+    let network = docker
+        .inspect_network(network_id, Some(config))
+        .await
+        .map_err(|e| CommandError::DockerError(format!("Failed to inspect network: {}", e)))?;
+
+    let containers = match network.containers {
+        Some(containers) => {
+            let mut result = Vec::new();
+            for (id, details) in containers {
+                let name = details.name.unwrap_or_else(|| id.clone());
+                result.push(NetworkContainer {
+                    id,
+                    name,
+                    network_id: network_id.to_string(),
+                });
+            }
+            result
+        }
+        None => Vec::new(),
+    };
+
+    Ok(containers)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -586,9 +704,11 @@ pub fn run() {
             pause_container,
             unpause_container,
             start_container,
-            delete_container
+            delete_container,
+            pull_image,
+            list_volumes,
+            list_network_containers
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

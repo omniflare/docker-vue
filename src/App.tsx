@@ -1,5 +1,8 @@
 import "./App.css";
 import Containers from "./components/Containers";
+import DockerImagesManager from "./components/ImageManager";
+import NetworkManager from "./components/NetworkManager";
+import VolumeManager from "./components/VolumeManager";
 // import { Toast } from "./components/ui/toast";
 
 function App() {
@@ -10,8 +13,12 @@ function App() {
       {/* <List />
        */}
 
-       <Containers />
+       {/* <Containers /> */}
         {/* <Toast /> */}
+
+        {/* <DockerImagesManager /> */}
+        {/* <VolumeManager /> */}
+        <NetworkManager />
     </div>
   );
 }
